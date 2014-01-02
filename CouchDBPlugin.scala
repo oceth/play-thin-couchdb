@@ -11,6 +11,7 @@ import scala.collection.JavaConversions._
 import play.api.libs.concurrent.Execution.Implicits.defaultContext
 import java.util.Collections
 import scala.collection.mutable
+import scala.io.Source
 
 /**
  * This plugin provides the couch db api and checks the couch db views and updates or creates them if necessary.
@@ -20,7 +21,12 @@ import scala.collection.mutable
 class CouchDBPlugin(app: Application) extends Plugin {
   val log = Logger(classOf[CouchDBPlugin])
 
-  def validateDesignDoc(doc: JsValue, cfg: Configuration): Boolean = true
+  def validateDesignDoc(doc: JsValue, cfg: Configuration): Boolean = false
+
+  def resolveResource(resource: String): String = {
+    log.debug(s"Loading resource '$resource'")
+    Source.fromInputStream(getClass.getResourceAsStream(resource)).buffered.mkString
+  }
 
   def updateDesign(dba: DBAccess, cfg: Configuration, rev: Option[String]): Future[DBAccess] = {
     val docid = "_design/"+cfg.getString("name").get
@@ -30,7 +36,26 @@ class CouchDBPlugin(app: Application) extends Plugin {
       obj += ("_rev" -> JsString(r))
     }
     obj += ("language" -> JsString("javascript"))
-    obj += ("views" -> JsObject(Seq()))
+
+    val views = for {
+      view <- cfg.getConfigList("views").get
+      vname = view.getString("name").get
+    } yield {
+      val map = view.getString("map").get
+      val reduce = view.getString("reduce")
+      if(reduce.isDefined) {
+        (vname, Json.obj(
+          "map" -> resolveResource(map),
+          "reduce" -> resolveResource(reduce.get)
+        ))
+      } else {
+        (vname, Json.obj(
+          "map" -> resolveResource(map)
+        ))
+      }
+    }
+
+    obj += ("views" -> JsObject(views.toSeq))
     dba.doc(docid, JsObject(obj)).map(design => dba)
   }
 
