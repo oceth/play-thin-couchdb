@@ -1,14 +1,16 @@
 package plugins
 
-import play.api.{Logger, Plugin, Application}
+import play.api.{Configuration, Logger, Plugin, Application}
 import play.api.libs.ws.{Response, WS}
 import java.net.{URLEncoder, URL}
-import play.api.libs.json.JsValue
-import scala.concurrent.{Await, Future}
+import play.api.libs.json._
+import scala.concurrent._
 import scala.concurrent.duration._
 import plugins.CouchDBPlugin.{DBAccess, Server, Authentication}
 import scala.collection.JavaConversions._
 import play.api.libs.concurrent.Execution.Implicits.defaultContext
+import java.util.Collections
+import scala.collection.mutable
 
 /**
  * This plugin provides the couch db api and checks the couch db views and updates or creates them if necessary.
@@ -18,11 +20,37 @@ import play.api.libs.concurrent.Execution.Implicits.defaultContext
 class CouchDBPlugin(app: Application) extends Plugin {
   val log = Logger(classOf[CouchDBPlugin])
 
+  def validateDesignDoc(doc: JsValue, cfg: Configuration): Boolean = true
+
+  def updateDesign(dba: DBAccess, cfg: Configuration, rev: Option[String]): Future[DBAccess] = {
+    val docid = "_design/"+cfg.getString("name").get
+    log.info(s"Updating design $docid")
+    val obj: mutable.Buffer[(String, JsValue)] = mutable.Buffer("_id" -> JsString(docid))
+    rev.foreach { r =>
+      obj += ("_rev" -> JsString(r))
+    }
+    obj += ("language" -> JsString("javascript"))
+    obj += ("views" -> JsObject(Seq()))
+    dba.doc(docid, JsObject(obj)).map(design => dba)
+  }
+
+  private def updateDesigns(fdb: Future[DBAccess]): Future[DBAccess] = fdb flatMap { db =>
+    val designs = db.cfg.getConfigList("designs").getOrElse(Collections.emptyList[Configuration]())
+    designs.foldLeft(future(db)) { case (chain, cfg) =>
+      chain.flatMap { cdb =>
+        cdb.doc("_design/"+cfg.getString("name").get).flatMap {
+          case Left(value) => if(!validateDesignDoc(value, cfg)) { updateDesign(cdb, cfg, Some((value \ "_rev").as[String])) } else { future(cdb) }
+          case _ => updateDesign(cdb, cfg, None)
+        }
+      }
+    }
+  }
+
   override def onStart() {
     log.info("Starting couchdb plugin")
     for((_, dba) <- db) {
       log.info(s"Checking db ${dba.dbName} for existence")
-      Await.result(dba.createIfNotExists, 60.seconds)
+      Await.result(updateDesigns(dba.createIfNotExists), 60.seconds)
     }
   }
 
@@ -42,13 +70,16 @@ class CouchDBPlugin(app: Application) extends Plugin {
       dbname = dbcfg.getString("name").get
     } yield {
       log.info(s"Opening database ${dbname}")
-      (dbname, DBAccess(dbname, server))
+      (dbname, DBAccess(dbname, dbcfg, server))
     }
     dbs.toMap
   }
 }
 
 object CouchDBPlugin {
+  private def urienc(str: String): String = {
+    URLEncoder.encode(str, "UTF-8")
+  }
 
   case class Authentication(user: String, password: String)
 
@@ -63,9 +94,6 @@ object CouchDBPlugin {
      * @return encoded parameters starting with "?" or empty string if no parameters were provided
      */
     private def encodeParams(params: Seq[(String, String)]): String = {
-      def urienc(str: String): String = {
-        URLEncoder.encode(str, "UTF-8")
-      }
 
       val (_, encodedParams) = params.foldLeft(("?", "")) { case ((sep, queryStr), elm) =>
         ("&", queryStr+sep+urienc(elm._1)+"="+urienc(elm._2))
@@ -79,7 +107,7 @@ object CouchDBPlugin {
     }
   }
 
-  case class DBAccess(dbName: String, conn: Server) {
+  case class DBAccess(dbName: String, cfg: Configuration, conn: Server) {
     val log = Logger(classOf[DBAccess])
 
     def create: Future[JsValue] = {
@@ -103,8 +131,35 @@ object CouchDBPlugin {
           log.info(s"Creating non-existing database ${dbName}")
           create.map((_) => this)
         } else {
-          Future(this)
+          future(this)
         }
+      }
+    }
+
+    def doc(id: String): Future[Either[JsValue, Throwable]] = {
+      val path = docPath(id)
+      conn.request(path).get().map { r =>
+        if(r.status != 200) {
+          Right(ServerError("Document not found", "GET", path, r))
+        } else {
+          Left(r.json)
+        }
+      }
+    }
+
+
+    def docPath(id: String) = {
+      s"$dbName/$id"
+    }
+
+    def doc(id: String, content: JsValue) = {
+      val path = docPath(id)
+      log.debug(s"Storing doc $path with content: ${content}")
+      conn.request(path).put(content).map { r =>
+        if(r.status > 299) {
+          throw ServerError("Error saving document ", "PUT", path, r)
+        }
+        r.json
       }
     }
   }
