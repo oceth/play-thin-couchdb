@@ -35,7 +35,7 @@ class CouchDBPlugin(app: Application) extends Plugin {
     rev.foreach { r =>
       obj += ("_rev" -> JsString(r))
     }
-    obj += ("language" -> JsString("javascript"))
+    obj += ("language" -> JsString(cfg.getString("language").getOrElse("javascript")))
 
     val views = for {
       view <- cfg.getConfigList("views").get
