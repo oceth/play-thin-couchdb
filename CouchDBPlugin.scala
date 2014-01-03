@@ -1,6 +1,6 @@
 package plugins
 
-import play.api.{Configuration, Logger, Plugin, Application}
+import play.api._
 import play.api.libs.ws.{Response, WS}
 import java.net.{URLEncoder, URL}
 import play.api.libs.json._
@@ -12,6 +12,13 @@ import play.api.libs.concurrent.Execution.Implicits.defaultContext
 import java.util.Collections
 import scala.collection.mutable
 import scala.io.Source
+import play.api.libs.ws.Response
+import play.api.libs.json.JsString
+import scala.Some
+import plugins.CouchDBPlugin.Authentication
+import plugins.CouchDBPlugin.Server
+import plugins.CouchDBPlugin.DBAccess
+import play.api.libs.json.JsObject
 
 /**
  * This plugin provides the couch db api and checks the couch db views and updates or creates them if necessary.
@@ -102,6 +109,10 @@ class CouchDBPlugin(app: Application) extends Plugin {
 }
 
 object CouchDBPlugin {
+  def db(name: String) = {
+    Play.maybeApplication.get.plugin(classOf[CouchDBPlugin]).get.db.get(name).get
+  }
+
   private def urienc(str: String): String = {
     URLEncoder.encode(str, "UTF-8")
   }
@@ -183,6 +194,16 @@ object CouchDBPlugin {
       conn.request(path).put(content).map { r =>
         if(r.status > 299) {
           throw ServerError("Error saving document ", "PUT", path, r)
+        }
+        r.json
+      }
+    }
+
+    def view(design: String, view: String, params: (String, String)*) = {
+      val path = docPath(s"_design/$design") + s"/_view/$view"
+      conn.request(path, params:_*).get.map { r =>
+        if(r.status != 200) {
+          throw ServerError("Error querying view", "GET", path, r)
         }
         r.json
       }
