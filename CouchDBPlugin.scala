@@ -71,7 +71,7 @@ class CouchDBPlugin(app: Application) extends Plugin {
     designs.foldLeft(future(db)) { case (chain, cfg) =>
       chain.flatMap { cdb =>
         cdb.doc("_design/"+cfg.getString("name").get).flatMap {
-          case Left(value) => if(!validateDesignDoc(value, cfg)) { updateDesign(cdb, cfg, Some((value \ "_rev").as[String])) } else { future(cdb) }
+          case Right(value) => if(!validateDesignDoc(value, cfg)) { updateDesign(cdb, cfg, Some((value \ "_rev").as[String])) } else { future(cdb) }
           case _ => updateDesign(cdb, cfg, None)
         }
       }
@@ -172,13 +172,13 @@ object CouchDBPlugin {
       }
     }
 
-    def doc(id: String): Future[Either[JsValue, Throwable]] = {
+    def doc(id: String): Future[Either[Throwable, JsValue]] = {
       val path = docPath(id)
       conn.request(path).get().map { r =>
         if(r.status != 200) {
-          Right(ServerError("Document not found", "GET", path, r))
+          Left(ServerError("Document not found", "GET", path, r))
         } else {
-          Left(r.json)
+          Right(r.json)
         }
       }
     }
