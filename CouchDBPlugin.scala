@@ -199,9 +199,16 @@ object CouchDBPlugin {
       }
     }
 
-    def view(design: String, view: String, params: (String, String)*) = {
+    def view(design: String, view: String, key: Option[JsValue] = None,
+             startKey: Option[JsValue] = None, endKey: Option[JsValue] = None,
+             includeDocs: Boolean = false, group: Boolean = false, reduce: Boolean = true,
+             params: List[(String, String)] = Nil) = {
       val path = docPath(s"_design/$design") + s"/_view/$view"
-      conn.request(path, params:_*).get.map { r =>
+      val genericParams = List("group" -> group.toString, "reduce" -> reduce.toString, "include_docs" -> includeDocs.toString)
+      val keyParams = List("key" -> key, "startKey" -> startKey, "endKey" -> endKey). flatMap { case(key,maybeValue) =>
+        maybeValue.map(v=>(key, Json.stringify(v)))
+      }
+      conn.request(path, (keyParams ++ genericParams ++ params):_*).get().map { r =>
         if(r.status != 200) {
           throw ServerError("Error querying view", "GET", path, r)
         }
