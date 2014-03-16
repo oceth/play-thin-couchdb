@@ -199,6 +199,41 @@ object CouchDBPlugin {
       }
     }
 
+    def forceDoc(id: String, content: JsValue) = {
+      doc(id).flatMap { res =>
+        res.fold(
+          error => doc(id, content),
+          jsdoc => {
+            val rev = jsdoc \ "_rev"
+            val tr =
+              (__ \ "_rev").json.prune andThen
+              __.json.update((__ \ "_rev").json.put(rev))
+            doc(id, content.transform(tr).get)
+          }
+        )
+      }
+    }
+
+    def delete(id: String, rev: Option[String] = None) = {
+      future(rev).flatMap { maybeRev =>
+        val frev = maybeRev.map(future(_)).getOrElse {
+          doc(id).map(_.fold(
+            error => throw new IllegalStateException("Doc not found", error),
+            success => (success \ "_rev").as[String]
+          ))
+        }
+        frev.flatMap { rev =>
+          val path = docPath(id)
+          conn.request(path, "rev" -> rev).delete().map { r =>
+            if(r.status > 299) {
+              throw ServerError("Error deleting doc", "DELETE", path, r)
+            }
+            r.json
+          }
+        }
+      }
+    }
+
     def view(design: String, view: String, key: Option[JsValue] = None,
              startKey: Option[JsValue] = None, endKey: Option[JsValue] = None,
              includeDocs: Boolean = false, group: Boolean = false, reduce: Boolean = true,
