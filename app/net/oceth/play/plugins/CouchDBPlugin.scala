@@ -116,7 +116,7 @@ object CouchDBPlugin {
 
   case class Authentication(user: String, password: String)
 
-  case class ServerError(message: String, method: String, path: String, response: Response) extends Throwable(s"$message: $method => $path = ${response.status}: ${response.statusText}")
+  case class ServerError(message: String, method: String, path: String, response: Response, cause: Option[Throwable] = None) extends Throwable(s"$message: $method => $path = ${response.status}: ${response.statusText}")
 
   case class Server(url: String, auth: Option[Authentication]) {
     private lazy val pUrl = new URL(url)
@@ -169,7 +169,18 @@ object CouchDBPlugin {
       }
     }
 
-    def doc(id: String): Future[Either[Throwable, JsValue]] = {
+
+    def forceDelete(id: String): Future[Either[ServerError, JsValue]] = {
+      doc(id).flatMap { _ match {
+        case l @ Left(error) => Future(l)
+        case Right(jsVal) =>
+          val rev = (jsVal \ "_rev").toString
+          delete(id, rev)
+      }
+      }
+    }
+
+    def doc(id: String): Future[Either[ServerError, JsValue]] = {
       val path = docPath(id)
       conn.request(path).get().map { r =>
         if(r.status != 200) {
@@ -185,18 +196,19 @@ object CouchDBPlugin {
       s"$dbName/$id"
     }
 
-    def doc(id: String, content: JsValue) = {
+    def doc(id: String, content: JsValue): Future[Either[ServerError, JsValue]] = {
       val path = docPath(id)
       log.debug(s"Storing doc $path with content: ${content}")
       conn.request(path).put(content).map { r =>
         if(r.status > 299) {
-          throw ServerError("Error saving document ", "PUT", path, r)
+          Left(ServerError("Error saving document ", "PUT", path, r))
+        } else {
+          Right(r.json)
         }
-        r.json
       }
     }
 
-    def forceDoc(id: String, content: JsValue) = {
+    def forceDoc(id: String, content: JsValue): Future[Either[ServerError, JsValue]] = {
       doc(id).flatMap { res =>
         res.fold(
           error => doc(id, content),
@@ -211,30 +223,23 @@ object CouchDBPlugin {
       }
     }
 
-    def delete(id: String, rev: Option[String] = None) = {
-      future(rev).flatMap { maybeRev =>
-        val frev = maybeRev.map(future(_)).getOrElse {
-          doc(id).map(_.fold(
-            error => throw new IllegalStateException("Doc not found", error),
-            success => (success \ "_rev").as[String]
-          ))
-        }
-        frev.flatMap { rev =>
-          val path = docPath(id)
-          conn.request(path, "rev" -> rev).delete().map { r =>
-            if(r.status > 299) {
-              throw ServerError("Error deleting doc", "DELETE", path, r)
-            }
-            r.json
+
+    def delete(id: String, rev: String): Future[Either[ServerError, JsValue]] = {
+      val path = docPath(id)
+      log.debug(s"deleting doc $path")
+      conn.request(path, ("rev" -> rev)).delete() map {
+        r =>
+          if (r.status > 299){
+            Left(ServerError("Error removing document ", "DELETE", path, r))
+          } else {
+            Right(r.json)
           }
-        }
       }
     }
-
     def view(design: String, view: String, key: Option[JsValue] = None,
              startKey: Option[JsValue] = None, endKey: Option[JsValue] = None,
              includeDocs: Boolean = false, group: Boolean = false, reduce: Boolean = true,
-             params: List[(String, String)] = Nil) = {
+             params: List[(String, String)] = Nil): Future[Either[ServerError, JsValue]] = {
       val path = docPath(s"_design/$design") + s"/_view/$view"
       val genericParams = List("group" -> group.toString, "reduce" -> reduce.toString, "include_docs" -> includeDocs.toString)
       val keyParams = List("key" -> key, "startKey" -> startKey, "endKey" -> endKey). flatMap { case(key,maybeValue) =>
@@ -242,9 +247,10 @@ object CouchDBPlugin {
       }
       conn.request(path, (keyParams ++ genericParams ++ params):_*).get().map { r =>
         if(r.status != 200) {
-          throw ServerError("Error querying view", "GET", path, r)
+          Left(ServerError("Error querying view", "GET", path, r))
+        } else {
+          Right(r.json)
         }
-        r.json
       }
     }
   }
