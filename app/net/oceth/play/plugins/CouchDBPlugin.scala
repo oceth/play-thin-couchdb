@@ -1,4 +1,4 @@
-package plugins
+package net.oceth.play.plugins
 
 import play.api._
 import play.api.libs.ws.{Response, WS}
@@ -6,7 +6,7 @@ import java.net.{URLEncoder, URL}
 import play.api.libs.json._
 import scala.concurrent._
 import scala.concurrent.duration._
-import plugins.CouchDBPlugin.{DBAccess, Server, Authentication}
+import net.oceth.play.plugins.CouchDBPlugin.{DBAccess, Server, Authentication}
 import scala.collection.JavaConversions._
 import play.api.libs.concurrent.Execution.Implicits.defaultContext
 import java.util.Collections
@@ -15,9 +15,6 @@ import scala.io.Source
 import play.api.libs.ws.Response
 import play.api.libs.json.JsString
 import scala.Some
-import plugins.CouchDBPlugin.Authentication
-import plugins.CouchDBPlugin.Server
-import plugins.CouchDBPlugin.DBAccess
 import play.api.libs.json.JsObject
 
 /**
