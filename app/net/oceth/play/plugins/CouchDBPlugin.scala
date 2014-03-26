@@ -16,6 +16,7 @@ import play.api.libs.ws.Response
 import play.api.libs.json.JsString
 import scala.Some
 import play.api.libs.json.JsObject
+import com.ning.http.client.Realm.AuthScheme
 
 /**
  * This plugin provides the couch db api and checks the couch db views and updates or creates them if necessary.
@@ -42,8 +43,8 @@ class CouchDBPlugin(app: Application) extends Plugin {
     obj += ("language" -> JsString(cfg.getString("language").getOrElse("javascript")))
 
     val views = for {
-      view <- cfg.getConfigList("views").get
-      vname = view.getString("name").get
+      view  <- cfg.getConfigList("views").get
+      vname <- view.getString("name").get
     } yield {
       val map = view.getString("map").get
       val reduce = view.getString("reduce")
@@ -135,8 +136,12 @@ object CouchDBPlugin {
     }
 
     def request(path: String, params: (String, String)*) = {
-      WS.url(new URL(pUrl.getProtocol, pUrl.getHost, pUrl.getPort, s"${pUrl.getPath}/$path${encodeParams(params)}").toString)
-        .withHeaders(("Accept", "application/json"))
+      val baseUrl: URL = new URL(pUrl.getProtocol, pUrl.getHost, pUrl.getPort, s"${pUrl.getPath}/$path${encodeParams(params)}")
+      val baseWs = WS.url(baseUrl.toString).withHeaders(("Accept", "application/json"))
+      auth match {
+        case None    => baseWs
+        case Some(a) => baseWs.withAuth(a.user, a.password, AuthScheme.BASIC)
+      }
     }
   }
 
