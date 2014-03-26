@@ -148,12 +148,13 @@ object CouchDBPlugin {
   case class DBAccess(dbName: String, cfg: Configuration, conn: Server) {
     val log = Logger(classOf[DBAccess])
 
-    def create: Future[JsValue] = {
+    def create: Future[Either[ServerError, JsValue]] = {
       conn.request(dbName).put("").map { r =>
         if(r.status != 201) {
-          throw ServerError("Error creating database", "PUT", dbName, r)
+          Left(ServerError("Error creating database", "PUT", dbName, r))
+        } else {
+          Right(r.json)
         }
-        r.json
       }
     }
 
