@@ -175,6 +175,18 @@ object CouchDBPlugin {
       }
     }
 
+    def delete(id: String, rev: String): Future[Either[ServerError, JsValue]] = {
+      val path = docPath(id)
+      log.debug(s"deleting doc $path")
+      conn.request(path, ("rev" -> rev)).delete() map {
+        r =>
+          if (r.status > 299){
+            Left(ServerError("Error removing document ", "DELETE", path, r))
+          } else {
+            Right(r.json)
+          }
+      }
+    }
 
     def forceDelete(id: String): Future[Either[ServerError, JsValue]] = {
       doc(id).flatMap { _ match {
@@ -182,9 +194,11 @@ object CouchDBPlugin {
         case Right(jsVal) =>
           val rev = (jsVal \ "_rev").toString
           delete(id, rev)
-      }
+       }
       }
     }
+
+    private def docPath(id: String) = s"$dbName/$id"
 
     def doc(id: String): Future[Either[ServerError, JsValue]] = {
       val path = docPath(id)
@@ -197,10 +211,6 @@ object CouchDBPlugin {
       }
     }
 
-
-    def docPath(id: String) = {
-      s"$dbName/$id"
-    }
 
     def doc(id: String, content: JsValue): Future[Either[ServerError, JsValue]] = {
       val path = docPath(id)
@@ -222,26 +232,13 @@ object CouchDBPlugin {
             val rev = jsdoc \ "_rev"
             val tr =
               (__ \ "_rev").json.prune andThen
-              __.json.update((__ \ "_rev").json.put(rev))
+                __.json.update((__ \ "_rev").json.put(rev))
             doc(id, content.transform(tr).get)
           }
         )
       }
     }
 
-
-    def delete(id: String, rev: String): Future[Either[ServerError, JsValue]] = {
-      val path = docPath(id)
-      log.debug(s"deleting doc $path")
-      conn.request(path, ("rev" -> rev)).delete() map {
-        r =>
-          if (r.status > 299){
-            Left(ServerError("Error removing document ", "DELETE", path, r))
-          } else {
-            Right(r.json)
-          }
-      }
-    }
     def view(design: String, view: String, key: Option[JsValue] = None,
              startKey: Option[JsValue] = None, endKey: Option[JsValue] = None,
              includeDocs: Boolean = false, group: Boolean = false, reduce: Boolean = true,
