@@ -245,7 +245,7 @@ object CouchDBPlugin {
              params: List[(String, String)] = Nil): Future[Either[ServerError, JsValue]] = {
       val path = docPath(s"_design/$design") + s"/_view/$view"
       val genericParams = List("group" -> group.toString, "reduce" -> reduce.toString, "include_docs" -> includeDocs.toString)
-      val keyParams = List("key" -> key, "startKey" -> startKey, "endKey" -> endKey). flatMap { case(key,maybeValue) =>
+      val keyParams = List("key" -> key, "startkey" -> startKey, "endkey" -> endKey). flatMap { case(key,maybeValue) =>
         maybeValue.map(v=>(key, Json.stringify(v)))
       }
       conn.request(path, (keyParams ++ genericParams ++ params):_*).get().map { r =>
