@@ -44,7 +44,7 @@ class CouchDBPlugin(app: Application) extends Plugin {
 
     val views = for {
       view  <- cfg.getConfigList("views").get
-      vname <- view.getString("name").get
+      vname = view.getString("name").get
     } yield {
       val map = view.getString("map").get
       val reduce = view.getString("reduce")
