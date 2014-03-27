@@ -16,6 +16,7 @@ import play.api.libs.ws.Response
 import play.api.libs.json.JsString
 import scala.Some
 import play.api.libs.json.JsObject
+import com.ning.http.client.Realm.AuthScheme
 
 /**
  * This plugin provides the couch db api and checks the couch db views and updates or creates them if necessary.
@@ -42,7 +43,7 @@ class CouchDBPlugin(app: Application) extends Plugin {
     obj += ("language" -> JsString(cfg.getString("language").getOrElse("javascript")))
 
     val views = for {
-      view <- cfg.getConfigList("views").get
+      view  <- cfg.getConfigList("views").get
       vname = view.getString("name").get
     } yield {
       val map = view.getString("map").get
@@ -135,20 +136,25 @@ object CouchDBPlugin {
     }
 
     def request(path: String, params: (String, String)*) = {
-      WS.url(new URL(pUrl.getProtocol, pUrl.getHost, pUrl.getPort, s"${pUrl.getPath}/$path${encodeParams(params)}").toString)
-        .withHeaders(("Accept", "application/json"))
+      val baseUrl: URL = new URL(pUrl.getProtocol, pUrl.getHost, pUrl.getPort, s"${pUrl.getPath}/$path${encodeParams(params)}")
+      val baseWs = WS.url(baseUrl.toString).withHeaders(("Accept", "application/json"))
+      auth match {
+        case None    => baseWs
+        case Some(a) => baseWs.withAuth(a.user, a.password, AuthScheme.BASIC)
+      }
     }
   }
 
   case class DBAccess(dbName: String, cfg: Configuration, conn: Server) {
     val log = Logger(classOf[DBAccess])
 
-    def create: Future[JsValue] = {
+    def create: Future[Either[ServerError, JsValue]] = {
       conn.request(dbName).put("").map { r =>
         if(r.status != 201) {
-          throw ServerError("Error creating database", "PUT", dbName, r)
+          Left(ServerError("Error creating database", "PUT", dbName, r))
+        } else {
+          Right(r.json)
         }
-        r.json
       }
     }
 
@@ -169,6 +175,18 @@ object CouchDBPlugin {
       }
     }
 
+    def delete(id: String, rev: String): Future[Either[ServerError, JsValue]] = {
+      val path = docPath(id)
+      log.debug(s"deleting doc $path")
+      conn.request(path, ("rev" -> rev)).delete() map {
+        r =>
+          if (r.status > 299){
+            Left(ServerError("Error removing document ", "DELETE", path, r))
+          } else {
+            Right(r.json)
+          }
+      }
+    }
 
     def forceDelete(id: String): Future[Either[ServerError, JsValue]] = {
       doc(id).flatMap { _ match {
@@ -176,9 +194,11 @@ object CouchDBPlugin {
         case Right(jsVal) =>
           val rev = (jsVal \ "_rev").toString
           delete(id, rev)
-      }
+       }
       }
     }
+
+    private def docPath(id: String) = s"$dbName/$id"
 
     def doc(id: String): Future[Either[ServerError, JsValue]] = {
       val path = docPath(id)
@@ -191,10 +211,6 @@ object CouchDBPlugin {
       }
     }
 
-
-    def docPath(id: String) = {
-      s"$dbName/$id"
-    }
 
     def doc(id: String, content: JsValue): Future[Either[ServerError, JsValue]] = {
       val path = docPath(id)
@@ -216,33 +232,20 @@ object CouchDBPlugin {
             val rev = jsdoc \ "_rev"
             val tr =
               (__ \ "_rev").json.prune andThen
-              __.json.update((__ \ "_rev").json.put(rev))
+                __.json.update((__ \ "_rev").json.put(rev))
             doc(id, content.transform(tr).get)
           }
         )
       }
     }
 
-
-    def delete(id: String, rev: String): Future[Either[ServerError, JsValue]] = {
-      val path = docPath(id)
-      log.debug(s"deleting doc $path")
-      conn.request(path, ("rev" -> rev)).delete() map {
-        r =>
-          if (r.status > 299){
-            Left(ServerError("Error removing document ", "DELETE", path, r))
-          } else {
-            Right(r.json)
-          }
-      }
-    }
     def view(design: String, view: String, key: Option[JsValue] = None,
              startKey: Option[JsValue] = None, endKey: Option[JsValue] = None,
              includeDocs: Boolean = false, group: Boolean = false, reduce: Boolean = true,
              params: List[(String, String)] = Nil): Future[Either[ServerError, JsValue]] = {
       val path = docPath(s"_design/$design") + s"/_view/$view"
       val genericParams = List("group" -> group.toString, "reduce" -> reduce.toString, "include_docs" -> includeDocs.toString)
-      val keyParams = List("key" -> key, "startKey" -> startKey, "endKey" -> endKey). flatMap { case(key,maybeValue) =>
+      val keyParams = List("key" -> key, "startkey" -> startKey, "endkey" -> endKey). flatMap { case(key,maybeValue) =>
         maybeValue.map(v=>(key, Json.stringify(v)))
       }
       conn.request(path, (keyParams ++ genericParams ++ params):_*).get().map { r =>
