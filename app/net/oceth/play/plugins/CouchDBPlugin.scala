@@ -241,7 +241,7 @@ object CouchDBPlugin {
 
     def view(design: String, view: String, key: Option[JsValue] = None,
              startKey: Option[JsValue] = None, endKey: Option[JsValue] = None,
-             includeDocs: Boolean = false, group: Boolean = false, reduce: Boolean = true,
+             includeDocs: Boolean = false, group: Boolean = false, reduce: Boolean = false,
              params: List[(String, String)] = Nil): Future[Either[ServerError, JsValue]] = {
       val path = docPath(s"_design/$design") + s"/_view/$view"
       val genericParams = List("group" -> group.toString, "reduce" -> reduce.toString, "include_docs" -> includeDocs.toString)
