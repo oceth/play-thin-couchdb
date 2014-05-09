@@ -192,7 +192,7 @@ object CouchDBPlugin {
       doc(id).flatMap { _ match {
         case l @ Left(error) => Future(l)
         case Right(jsVal) =>
-          val rev = (jsVal \ "_rev").toString
+          val rev = (jsVal \ "_rev").as[String]
           delete(id, rev)
        }
       }
