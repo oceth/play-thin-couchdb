@@ -127,7 +127,7 @@ object CouchDBPlugin {
      * @param params List of the parameters
      * @return encoded parameters starting with "?" or empty string if no parameters were provided
      */
-    private def encodeParams(params: Seq[(String, String)]): String = {
+    private[CouchDBPlugin] def encodeParams(params: Seq[(String, String)]): String = {
 
       val (_, encodedParams) = params.foldLeft(("?", "")) { case ((sep, queryStr), elm) =>
         ("&", queryStr+sep+urienc(elm._1)+"="+urienc(elm._2))
@@ -248,9 +248,10 @@ object CouchDBPlugin {
       val keyParams = List("key" -> key, "startkey" -> startKey, "endkey" -> endKey). flatMap { case(key,maybeValue) =>
         maybeValue.map(v=>(key, Json.stringify(v)))
       }
-      conn.request(path, (keyParams ++ genericParams ++ params):_*).get().map { r =>
+      val rparams: List[(String, String)] = keyParams ++ genericParams ++ params
+      conn.request(path, rparams:_*).get().map { r =>
         if(r.status != 200) {
-          Left(ServerError("Error querying view", "GET", path, r))
+          Left(ServerError("Error querying view", "GET", path+conn.encodeParams(rparams), r))
         } else {
           Right(r.json)
         }
